@@ -1,8 +1,8 @@
 use std::env;
 use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::Path;
-use png::Decoder;
+use std::io::{BufReader, BufWriter, Read};
+use std::path::{Path, PathBuf};
+use png::{Decoder, Encoder};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -49,7 +49,7 @@ fn main() {
     let reader = BufReader::new(file);
     let decoder = Decoder::new(reader);
     
-    let reader = match decoder.read_info() {
+    let mut reader = match decoder.read_info() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error reading PNG: {}", e);
@@ -57,27 +57,49 @@ fn main() {
         }
     };
     
+    // Get info and clone it before reading frame (to avoid borrowing issues)
     let info = reader.info();
+    let width = info.width;
+    let height = info.height;
+    let color_type = info.color_type;
+    let bit_depth = info.bit_depth;
+    let bytes_per_pixel = info.bytes_per_pixel();
+    let interlaced = info.interlaced;
+    let trns = info.trns.as_ref().map(|cow| cow.to_vec());
+    let utf8_text = info.utf8_text.clone();
+    
+    // Allocate buffer for image data
+    // Calculate buffer size: width * height * bytes_per_pixel
+    let buffer_size = (width as usize) * (height as usize) * bytes_per_pixel;
+    let mut buf = vec![0; buffer_size];
+    
+    // Read image data
+    match reader.next_frame(&mut buf) {
+        Ok(_) => {},
+        Err(e) => {
+            eprintln!("Error reading image data: {}", e);
+            std::process::exit(1);
+        }
+    }
     
     // Get utf8_text from info
-    let utf8_text = info.utf8_text.clone();
     for text in utf8_text {
         println!("Text: {}", text.get_text().unwrap());
     }
     
     // Basic image information
-    println!("Width: {} pixels", info.width);
-    println!("Height: {} pixels", info.height);
-    println!("Color type: {:?}", info.color_type);
-    println!("Bit depth: {:?}", info.bit_depth);
-    println!("Bytes per pixel: {}", info.bytes_per_pixel());
+    println!("Width: {} pixels", width);
+    println!("Height: {} pixels", height);
+    println!("Color type: {:?}", color_type);
+    println!("Bit depth: {:?}", bit_depth);
+    println!("Bytes per pixel: {}", bytes_per_pixel);
     
     // Interlacing
-    println!("Interlaced: {}", info.interlaced);
+    println!("Interlaced: {}", interlaced);
     
     // Additional info fields
-    if let Some(trns) = &info.trns {
-        println!("Transparency: {:?}", trns);
+    if let Some(ref trns_data) = trns {
+        println!("Transparency: {:?}", trns_data);
     }
     
     // Read chunks for additional metadata
@@ -234,6 +256,77 @@ fn main() {
     
     println!("\n=== Summary ===");
     println!("File: {}", file_path);
-    println!("Dimensions: {}x{}", info.width, info.height);
-    println!("Color format: {:?} at {:?} bits", info.color_type, info.bit_depth);
+    println!("Dimensions: {}x{}", width, height);
+    println!("Color format: {:?} at {:?} bits", color_type, bit_depth);
+    
+    // Create output file path with "-unpeeled" before extension
+    let output_path = create_output_path(path);
+    println!("\n=== Writing Output Image ===");
+    println!("Output file: {}", output_path.display());
+    
+    // Write the image to the new file
+    match write_png_image(&output_path, width, height, color_type, bit_depth, &trns, &buf) {
+        Ok(_) => {
+            println!("Successfully wrote image to: {}", output_path.display());
+        }
+        Err(e) => {
+            eprintln!("Error writing output image: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn create_output_path(input_path: &Path) -> PathBuf {
+    let mut output_path = input_path.to_path_buf();
+    
+    // Get the file stem and extension
+    if let Some(file_stem) = input_path.file_stem() {
+        if let Some(extension) = input_path.extension() {
+            // Create new filename with "-unpeeled" before extension
+            let new_filename = format!("{}-unpeeled.{}", 
+                file_stem.to_string_lossy(), 
+                extension.to_string_lossy());
+            output_path.set_file_name(new_filename);
+        } else {
+            // No extension, just append "-unpeeled"
+            let new_filename = format!("{}-unpeeled", file_stem.to_string_lossy());
+            output_path.set_file_name(new_filename);
+        }
+    } else {
+        // Fallback: append "-unpeeled" to the path
+        let mut path_str = input_path.to_string_lossy().to_string();
+        path_str.push_str("-unpeeled");
+        output_path = PathBuf::from(path_str);
+    }
+    
+    output_path
+}
+
+fn write_png_image(
+    output_path: &Path,
+    width: u32,
+    height: u32,
+    color_type: png::ColorType,
+    bit_depth: png::BitDepth,
+    trns: &Option<Vec<u8>>,
+    image_data: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file = File::create(output_path)?;
+    let writer = BufWriter::new(file);
+    
+    let mut encoder = Encoder::new(writer, width, height);
+    
+    // Set color type and bit depth
+    encoder.set_color(color_type);
+    encoder.set_depth(bit_depth);
+    
+    // Copy other info fields
+    if let Some(trns_data) = trns {
+        encoder.set_trns(trns_data.clone());
+    }
+    
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(image_data)?;
+    
+    Ok(())
 }
