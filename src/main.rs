@@ -316,17 +316,33 @@ fn write_png_image(
     
     let mut encoder = Encoder::new(writer, width, height);
     
-    // Set color type and bit depth
+    // Set only essential metadata: color type and bit depth
     encoder.set_color(color_type);
     encoder.set_depth(bit_depth);
     
-    // Copy other info fields
-    if let Some(trns_data) = trns {
-        encoder.set_trns(trns_data.clone());
+    // Only include transparency (tRNS) if:
+    // 1. The color type supports transparency via tRNS (Grayscale, RGB, or Indexed)
+    // 2. AND transparency data actually exists
+    // Note: GrayscaleAlpha and RgbAlpha have transparency built into pixel data, so tRNS is not needed
+    match color_type {
+        png::ColorType::Grayscale | png::ColorType::Rgb | png::ColorType::Indexed => {
+            // These color types can use tRNS for transparency
+            if let Some(trns_data) = trns {
+                if !trns_data.is_empty() {
+                    encoder.set_trns(trns_data.clone());
+                }
+            }
+        }
+        _ => {
+            // GrayscaleAlpha and RgbAlpha have transparency in pixel data, tRNS not needed
+        }
     }
     
+    // Write header (creates IHDR chunk)
     let mut writer = encoder.write_header()?;
+    // Write image data (creates IDAT chunks)
     writer.write_image_data(image_data)?;
+    // Writer automatically closes with IEND chunk
     
     Ok(())
 }
