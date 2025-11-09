@@ -2,7 +2,8 @@ use std::env;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
-use png::{Decoder, Encoder};
+use png::{Decoder, Encoder, ColorType};
+use rand::Rng;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -31,8 +32,6 @@ fn main() {
         if let Ok(created) = metadata.created() {
             println!("Created: {:?}", created);
         }
-        println!("Is file: {}", metadata.is_file());
-        println!("Is directory: {}", metadata.is_dir());
     }
     
     println!("\n=== PNG Image Metadata ===");
@@ -64,9 +63,7 @@ fn main() {
     let color_type = info.color_type;
     let bit_depth = info.bit_depth;
     let bytes_per_pixel = info.bytes_per_pixel();
-    let interlaced = info.interlaced;
     let trns = info.trns.as_ref().map(|cow| cow.to_vec());
-    let utf8_text = info.utf8_text.clone();
     
     // Allocate buffer for image data
     // Calculate buffer size: width * height * bytes_per_pixel
@@ -82,10 +79,8 @@ fn main() {
         }
     }
     
-    // Get utf8_text from info
-    for text in utf8_text {
-        println!("Text: {}", text.get_text().unwrap());
-    }
+    // Add randomized noise to each pixel
+    add_randomized_noise(&mut buf, color_type);
     
     // Basic image information
     println!("Width: {} pixels", width);
@@ -93,17 +88,6 @@ fn main() {
     println!("Color type: {:?}", color_type);
     println!("Bit depth: {:?}", bit_depth);
     println!("Bytes per pixel: {}", bytes_per_pixel);
-    
-    // Interlacing
-    println!("Interlaced: {}", interlaced);
-    
-    // Additional info fields
-    if let Some(ref trns_data) = trns {
-        println!("Transparency: {:?}", trns_data);
-    }
-    
-    // Read chunks for additional metadata
-    println!("\n=== PNG Chunks (Metadata) ===");
     
     // Manually parse PNG file to read chunks
     let mut file = match File::open(path) {
@@ -126,134 +110,6 @@ fn main() {
         }
     }
     
-    let mut chunks_found = false;
-    
-    // Read chunks: length (4 bytes), chunk type (4 bytes), data (length bytes), CRC (4 bytes)
-    loop {
-        let mut length_bytes = [0u8; 4];
-        if file.read_exact(&mut length_bytes).is_err() {
-            break;
-        }
-        let length = u32::from_be_bytes(length_bytes) as usize;
-        
-        let mut chunk_type_bytes = [0u8; 4];
-        if file.read_exact(&mut chunk_type_bytes).is_err() {
-            break;
-        }
-        let chunk_type = &chunk_type_bytes;
-        
-        let mut data = vec![0u8; length];
-        if file.read_exact(&mut data).is_err() {
-            break;
-        }
-        
-        let mut crc_bytes = [0u8; 4];
-        if file.read_exact(&mut crc_bytes).is_err() {
-            break;
-        }
-        
-        chunks_found = true;
-        
-        // Process chunks
-        match chunk_type {
-            b"tEXt" => {
-                // tEXt chunk: keyword\0text
-                if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                    let keyword = String::from_utf8_lossy(&data[..null_pos]);
-                    let text = String::from_utf8_lossy(&data[null_pos + 1..]);
-                    println!("tEXt chunk - {}: {}", keyword, text);
-                }
-            }
-            b"zTXt" => {
-                // zTXt chunk: keyword\0compression_method\0compressed_text
-                if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                    let keyword = String::from_utf8_lossy(&data[..null_pos]);
-                    if data.len() > null_pos + 1 {
-                        let compression_method = data[null_pos + 1];
-                        println!("zTXt chunk - {}: [compressed, method: {}]", keyword, compression_method);
-                    }
-                }
-            }
-            b"iTXt" => {
-                // iTXt chunk: keyword\0compression_flag\0compression_method\0language_tag\0translated_keyword\0text
-                if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                    let keyword = String::from_utf8_lossy(&data[..null_pos]);
-                    println!("iTXt chunk - {}: [international text]", keyword);
-                }
-            }
-            b"pHYs" => {
-                // pHYs chunk: 9 bytes - x_pixels_per_unit (4), y_pixels_per_unit (4), unit (1)
-                if data.len() >= 9 {
-                    let x = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                    let y = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                    let unit = data[8];
-                    let unit_str = if unit == 1 { "meter" } else { "unknown" };
-                    println!("pHYs chunk - X: {}, Y: {}, Unit: {}", x, y, unit_str);
-                }
-            }
-            b"tIME" => {
-                // tIME chunk: 7 bytes - year (2), month (1), day (1), hour (1), minute (1), second (1)
-                if data.len() >= 7 {
-                    let year = u16::from_be_bytes([data[0], data[1]]);
-                    println!("tIME chunk - {}-{:02}-{:02} {:02}:{:02}:{:02}", 
-                            year, data[2], data[3], data[4], data[5], data[6]);
-                }
-            }
-            b"gAMA" => {
-                // gAMA chunk: 4 bytes - gamma value
-                if data.len() >= 4 {
-                    let gamma = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                    println!("gAMA chunk - Gamma: {}", gamma as f64 / 100000.0);
-                }
-            }
-            b"cHRM" => {
-                // cHRM chunk: 32 bytes - white point (8), red (8), green (8), blue (8)
-                if data.len() >= 32 {
-                    println!("cHRM chunk - [chromaticity data present]");
-                }
-            }
-            b"sRGB" => {
-                // sRGB chunk: 1 byte - rendering intent
-                if !data.is_empty() {
-                    let intent = match data[0] {
-                        0 => "Perceptual",
-                        1 => "Relative colorimetric",
-                        2 => "Saturation",
-                        3 => "Absolute colorimetric",
-                        _ => "Unknown",
-                    };
-                    println!("sRGB chunk - Rendering intent: {}", intent);
-                }
-            }
-            b"iCCP" => {
-                // iCCP chunk: profile_name\0compression_method\0compressed_profile
-                if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                    let profile_name = String::from_utf8_lossy(&data[..null_pos]);
-                    if data.len() > null_pos + 1 {
-                        let compression_method = data[null_pos + 1];
-                        let profile_size = data.len() - null_pos - 2;
-                        println!("iCCP chunk - Profile name: {}", profile_name);
-                        println!("  Compression method: {}", compression_method);
-                        println!("  Profile size: {} bytes", profile_size);
-                    }
-                }
-            }
-            b"IEND" => {
-                // IEND chunk marks the end
-                break;
-            }
-            _ => {
-                // Other chunk types
-                let chunk_name = String::from_utf8_lossy(chunk_type);
-                println!("Other chunk - {}: {} bytes", chunk_name, data.len());
-            }
-        }
-    }
-    
-    if !chunks_found {
-        println!("No additional metadata chunks found in PNG file.");
-    }
-    
     println!("\n=== Summary ===");
     println!("File: {}", file_path);
     println!("Dimensions: {}x{}", width, height);
@@ -272,6 +128,64 @@ fn main() {
         Err(e) => {
             eprintln!("Error writing output image: {}", e);
             std::process::exit(1);
+        }
+    }
+}
+
+fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
+    let mut rng = rand::thread_rng();
+    
+    match color_type {
+        ColorType::Rgb => {
+            // RGB: 3 bytes per pixel (R, G, B)
+            for pixel in buf.chunks_exact_mut(3) {
+                // Randomly select R (0), G (1), or B (2)
+                let channel = rng.gen_range(0..3);
+                // Randomly add or subtract 1
+                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let new_value = pixel[channel] as i16 + change;
+                pixel[channel] = new_value.clamp(0, 255) as u8;
+            }
+        }
+        ColorType::Rgba => {
+            // RGBA: 4 bytes per pixel (R, G, B, A)
+            for pixel in buf.chunks_exact_mut(4) {
+                // Randomly select R (0), G (1), or B (2) - skip Alpha (3)
+                let channel = rng.gen_range(0..3);
+                // Randomly add or subtract 1
+                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let new_value = pixel[channel] as i16 + change;
+                pixel[channel] = new_value.clamp(0, 255) as u8;
+            }
+        }
+        ColorType::Grayscale => {
+            // Grayscale: 1 byte per pixel
+            for pixel in buf.iter_mut() {
+                // Randomly add or subtract 1
+                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let new_value = *pixel as i16 + change;
+                *pixel = new_value.clamp(0, 255) as u8;
+            }
+        }
+        ColorType::GrayscaleAlpha => {
+            // GrayscaleAlpha: 2 bytes per pixel (G, A)
+            for pixel in buf.chunks_exact_mut(2) {
+                // Modify the grayscale channel (0), skip Alpha (1)
+                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let new_value = pixel[0] as i16 + change;
+                pixel[0] = new_value.clamp(0, 255) as u8;
+            }
+        }
+        ColorType::Indexed => {
+            // Indexed: 1 byte per pixel (palette index)
+            // For indexed color, we modify the palette index value
+            // This will change which color from the palette is used
+            for pixel in buf.iter_mut() {
+                // Randomly add or subtract 1 from the palette index
+                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let new_value = *pixel as i16 + change;
+                *pixel = new_value.clamp(0, 255) as u8;
+            }
         }
     }
 }
