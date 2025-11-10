@@ -142,7 +142,7 @@ fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
                 // Randomly select R (0), G (1), or B (2)
                 let channel = rng.gen_range(0..3);
                 // Randomly add or subtract 1
-                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let change: i16 = if rng.gen_bool(0.5) { 7 } else { -7 };
                 let new_value = pixel[channel] as i16 + change;
                 pixel[channel] = new_value.clamp(0, 255) as u8;
             }
@@ -153,7 +153,7 @@ fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
                 // Randomly select R (0), G (1), or B (2) - skip Alpha (3)
                 let channel = rng.gen_range(0..3);
                 // Randomly add or subtract 1
-                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let change: i16 = if rng.gen_bool(0.5) { 7 } else { -7 };
                 let new_value = pixel[channel] as i16 + change;
                 pixel[channel] = new_value.clamp(0, 255) as u8;
             }
@@ -162,7 +162,7 @@ fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
             // Grayscale: 1 byte per pixel
             for pixel in buf.iter_mut() {
                 // Randomly add or subtract 1
-                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let change: i16 = if rng.gen_bool(0.5) { 7 } else { -7 };
                 let new_value = *pixel as i16 + change;
                 *pixel = new_value.clamp(0, 255) as u8;
             }
@@ -171,7 +171,7 @@ fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
             // GrayscaleAlpha: 2 bytes per pixel (G, A)
             for pixel in buf.chunks_exact_mut(2) {
                 // Modify the grayscale channel (0), skip Alpha (1)
-                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let change: i16 = if rng.gen_bool(0.5) { 7 } else { -7 };
                 let new_value = pixel[0] as i16 + change;
                 pixel[0] = new_value.clamp(0, 255) as u8;
             }
@@ -182,7 +182,7 @@ fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
             // This will change which color from the palette is used
             for pixel in buf.iter_mut() {
                 // Randomly add or subtract 1 from the palette index
-                let change: i16 = if rng.gen_bool(0.5) { 15 } else { -15 };
+                let change: i16 = if rng.gen_bool(0.5) { 7 } else { -7 };
                 let new_value = *pixel as i16 + change;
                 *pixel = new_value.clamp(0, 255) as u8;
             }
