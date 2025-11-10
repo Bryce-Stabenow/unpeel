@@ -82,6 +82,9 @@ fn main() {
     // Add randomized noise to each pixel
     add_randomized_noise(&mut buf, color_type);
     
+    // Crop image to 88% of original size (keeping top-left portion)
+    let (new_width, new_height, cropped_buf) = crop_image(&buf, width, height, bytes_per_pixel);
+    
     // Basic image information
     println!("Width: {} pixels", width);
     println!("Height: {} pixels", height);
@@ -112,7 +115,8 @@ fn main() {
     
     println!("\n=== Summary ===");
     println!("File: {}", file_path);
-    println!("Dimensions: {}x{}", width, height);
+    println!("Original dimensions: {}x{}", width, height);
+    println!("Cropped dimensions: {}x{}", new_width, new_height);
     println!("Color format: {:?} at {:?} bits", color_type, bit_depth);
     
     // Create output file path with "-unpeeled" before extension
@@ -120,8 +124,8 @@ fn main() {
     println!("\n=== Writing Output Image ===");
     println!("Output file: {}", output_path.display());
     
-    // Write the image to the new file
-    match write_png_image(&output_path, width, height, color_type, bit_depth, &trns, &buf) {
+    // Write the cropped image to the new file
+    match write_png_image(&output_path, new_width, new_height, color_type, bit_depth, &trns, &cropped_buf) {
         Ok(_) => {
             println!("Successfully wrote image to: {}", output_path.display());
         }
@@ -130,6 +134,33 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn crop_image(
+    buf: &[u8],
+    original_width: u32,
+    original_height: u32,
+    bytes_per_pixel: usize,
+) -> (u32, u32, Vec<u8>) {
+    // Calculate new dimensions (88% of original, rounded down)
+    let new_width = (original_width as f64 * 0.88) as u32;
+    let new_height = (original_height as f64 * 0.88) as u32;
+    
+    // Calculate row size in bytes
+    let original_row_size = (original_width as usize) * bytes_per_pixel;
+    let new_row_size = (new_width as usize) * bytes_per_pixel;
+    
+    // Allocate buffer for cropped image
+    let mut cropped_buf = Vec::with_capacity((new_width as usize) * (new_height as usize) * bytes_per_pixel);
+    
+    // Extract top-left portion: rows 0 to new_height-1, columns 0 to new_width-1
+    for row in 0..new_height as usize {
+        let start_idx = row * original_row_size;
+        let end_idx = start_idx + new_row_size;
+        cropped_buf.extend_from_slice(&buf[start_idx..end_idx]);
+    }
+    
+    (new_width, new_height, cropped_buf)
 }
 
 fn add_randomized_noise(buf: &mut [u8], color_type: ColorType) {
